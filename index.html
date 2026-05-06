@@ -179,8 +179,8 @@ html, body { height: 100%; background: var(--bg); font-family: 'Urbanist', sans-
 .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
 
 /* FLOATING TIMER */
-#float-timer { display: none; position: fixed; bottom: 96px; left: 50%; transform: translateX(-50%); background: var(--navy); color: white; border-radius: 30px; padding: 12px 20px; display: none; align-items: center; gap: 12px; box-shadow: 0 8px 32px rgba(29,42,98,0.3); z-index: 150; max-width: 380px; width: calc(100% - 40px); cursor: pointer; }
-#float-timer.visible { display: flex; }
+#float-timer { display: none; position: fixed; bottom: 96px; left: 50%; transform: translateX(-50%); background: var(--navy); color: white; border-radius: 30px; padding: 10px 14px; display: none; align-items: center; gap: 8px; box-shadow: 0 8px 32px rgba(29,42,98,0.3); z-index: 150; max-width: 380px; width: calc(100% - 40px); cursor: pointer; pointer-events: none; }
+#float-timer.visible { display: flex; pointer-events: all; }
 .float-timer-name { font-size: 13px; font-weight: 600; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .float-timer-time { font-size: 16px; font-weight: 800; font-variant-numeric: tabular-nums; }
 
@@ -432,7 +432,7 @@ html, body { height: 100%; background: var(--bg); font-family: 'Urbanist', sans-
       <div style="padding:16px 20px 12px;display:flex;align-items:center;justify-content:space-between;">
         <div>
           <div style="font-size:18px;font-weight:800;color:var(--navy);">Today</div>
-          <div style="font-size:12px;color:var(--gray);" id="myday-date-label"></div>
+          <div style="font-size:12px;color:var(--gray);min-height:16px;" id="myday-date-label"></div>
         </div>
         <div style="display:flex;gap:8px;">
           <button class="btn-icon" id="myday-recap-toggle" onclick="toggleMydayRecap()" title="Morning plan">
@@ -1130,6 +1130,8 @@ html, body { height: 100%; background: var(--bg); font-family: 'Urbanist', sans-
     <div class="float-timer-name" id="float-task-name">Focus session</div>
     <div class="float-timer-time" id="float-time">45:00</div>
     <button onclick="event.stopPropagation();pauseFloatTimer()" style="background:rgba(255,255,255,0.2);border:none;border-radius:8px;color:white;padding:6px 10px;cursor:pointer;font-size:12px;" id="float-pause-btn">||</button>
+    <button onclick="event.stopPropagation();markTimerDone()" title="Terminer maintenant" style="background:rgba(16,185,129,0.3);border:none;border-radius:8px;color:white;padding:6px 10px;cursor:pointer;font-size:12px;">✓</button>
+    <button onclick="event.stopPropagation();stopFocusTimer()" title="Arrêter le timer" style="background:rgba(239,68,68,0.3);border:none;border-radius:8px;color:white;padding:6px 8px;cursor:pointer;font-size:13px;line-height:1;">✕</button>
   </div>
 
 </div>
@@ -1308,72 +1310,146 @@ function refreshDashboard() {
   const plan = getData('today_plan', null);
   const noPlan = document.getElementById('dash-no-plan');
   const mainFocus = document.getElementById('dash-main-focus');
-  
+  const today = new Date().toDateString();
+
+  // Get today's events
+  const allEvents = getData('planner_events', []);
+  const todayEvents = allEvents.filter(e => new Date(e.date).toDateString() === today);
+  const doneEvents = todayEvents.filter(e => e.done);
+  const totalEvents = todayEvents.length;
+
+  // Main focus card — calculate pct from planner events
   if (plan && plan.mainGoal) {
     noPlan.style.display = 'none';
     mainFocus.style.display = 'block';
     document.getElementById('focus-goal-text').textContent = plan.mainGoal;
-    const pct = getData('main_goal_pct', 0);
-    document.getElementById('focus-fill').style.width = pct + '%';
-    document.getElementById('focus-pct').textContent = pct + '% done';
+
+    // Find the main goal event in planner to check if done
+    const mainEv = todayEvents.find(e =>
+      e.name && plan.mainGoal &&
+      (e.name.toLowerCase().includes(plan.mainGoal.toLowerCase().slice(0,15)) ||
+       plan.mainGoal.toLowerCase().includes(e.name.toLowerCase().slice(0,15)))
+    );
+    const mainDone = mainEv?.done || false;
+
+    // Overall pct = done events / total events for today
+    const pct = totalEvents > 0 ? Math.round(doneEvents.length / totalEvents * 100) : (mainDone ? 100 : 0);
+
+    const fill = document.getElementById('focus-fill');
+    const pctEl = document.getElementById('focus-pct');
+    if (fill) fill.style.width = pct + '%';
+    if (fill) fill.style.background = pct === 100 ? 'var(--success)' : 'var(--navy)';
+    if (pctEl) {
+      if (totalEvents === 0) {
+        pctEl.textContent = 'Aucune tâche planifiée';
+        pctEl.style.color = 'var(--gray)';
+      } else {
+        pctEl.textContent = `${doneEvents.length}/${totalEvents} tâches · ${pct}%`;
+        pctEl.style.color = pct === 100 ? 'var(--success)' : 'var(--gray)';
+      }
+    }
   } else {
     noPlan.style.display = 'block';
     mainFocus.style.display = 'none';
   }
-  
+
   // Quote
   const quotes = getData('quotes', []);
-  const dayIdx = new Date().getDate() % quotes.length;
-  if (quotes[dayIdx]) {
-    document.getElementById('dash-quote-text').textContent = '"' + quotes[dayIdx].text + '"';
-    document.getElementById('dash-quote-author').textContent = quotes[dayIdx].author ? '— ' + quotes[dayIdx].author : '';
-  }
-  
-  // Alerts
-  const alertsEl = document.getElementById('dash-alerts');
-  alertsEl.innerHTML = '';
-  const sleepLog = getData('sleep_log', []);
-  if (sleepLog.length > 0) {
-    const last = sleepLog[sleepLog.length-1];
-    if (last.hours < 6) {
-      alertsEl.innerHTML += `<div class="alert alert-warning"><span>😴</span><div><b>Low sleep detected</b><br><span style="font-size:12px;">You slept ${last.hours.toFixed(1)}h. Take it easy today.</span></div></div>`;
+  if (quotes.length > 0) {
+    const dayIdx = new Date().getDate() % quotes.length;
+    const q = quotes[dayIdx];
+    if (q) {
+      const qt = document.getElementById('dash-quote-text');
+      const qa = document.getElementById('dash-quote-author');
+      if (qt) qt.textContent = '"' + q.text + '"';
+      if (qa) qa.textContent = q.author ? '— ' + q.author : '';
     }
   }
-  
+
+  // Alerts
+  const alertsEl = document.getElementById('dash-alerts');
+  if (alertsEl) {
+    alertsEl.innerHTML = '';
+    const sleepLog = getData('sleep_log', []);
+    if (sleepLog.length > 0) {
+      const last = sleepLog[sleepLog.length-1];
+      const isToday = new Date(last.date||last.timestamp).toDateString() === today;
+      if (isToday && last.hours < 6) {
+        alertsEl.innerHTML = `<div class="alert alert-warning"><svg width="16" height="16" fill="none" viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z" stroke="currentColor" stroke-width="2"/></svg><div><b>Sommeil insuffisant</b><br><span style="font-size:12px;">Tu as dormi ${parseFloat(last.hours).toFixed(1)}h. Prends soin de toi.</span></div></div>`;
+      }
+    }
+  }
+
   // Stats
   const ws = getData('work_sessions', []);
-  const today = new Date().toDateString();
   const todaySessions = ws.filter(s => new Date(s.date).toDateString() === today);
-  const totalMin = todaySessions.reduce((a,b) => a + (b.duration || 0), 0);
-  document.getElementById('stat-hours').textContent = totalMin >= 60 ? Math.floor(totalMin/60) + 'h' + (totalMin%60 ? (totalMin%60)+'m' : '') : totalMin + 'm';
-  document.getElementById('stat-tasks').textContent = todaySessions.length;
-  
+  const totalMin = todaySessions.reduce((a,b) => a + parseInt(b.duration||0), 0);
+  const statH = document.getElementById('stat-hours');
+  const statT = document.getElementById('stat-tasks');
+  if (statH) statH.textContent = totalMin >= 60 ? Math.floor(totalMin/60) + 'h' + (totalMin%60 ? (totalMin%60)+'m' : '') : totalMin + 'm';
+  if (statT) statT.textContent = doneEvents.length || todaySessions.length;
+
   // Mini planner
-  const events = getData('planner_events', []).filter(e => {
-    const ep = new Date(e.date);
-    return ep.toDateString() === today;
-  });
   const miniPl = document.getElementById('dash-mini-planner');
-  if (events.length === 0) {
-    miniPl.innerHTML = `<div style="font-size:13px;color:var(--gray);text-align:center;padding:12px;">No events planned. <span style="color:var(--navy);cursor:pointer;" onclick="showPage('page-myday')">Add in My Day →</span></div>`;
+  if (!miniPl) return;
+  const sorted = todayEvents.slice().sort((a,b)=>(a.time||'').localeCompare(b.time||''));
+  if (sorted.length === 0) {
+    miniPl.innerHTML = `<div style="font-size:13px;color:var(--gray);text-align:center;padding:12px;">Aucun événement planifié. <span style="color:var(--navy);cursor:pointer;" onclick="showPage('page-myday')">Ajouter →</span></div>`;
   } else {
-    miniPl.innerHTML = events.slice(0,3).map(e => `
-      <div class="timeline-item">
-        <div class="timeline-time">${e.time}</div>
-        <div class="timeline-content"><div class="timeline-task-name">${e.name}</div><div class="timeline-task-meta">${e.duration} min</div></div>
-      </div>`).join('');
+    miniPl.innerHTML =
+      `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+        <div style="font-size:12px;color:var(--gray);">${doneEvents.length}/${sorted.length} terminées</div>
+        <div style="height:6px;flex:1;margin:0 10px;background:var(--border);border-radius:3px;overflow:hidden;">
+          <div style="height:100%;width:${totalEvents>0?Math.round(doneEvents.length/totalEvents*100):0}%;background:${doneEvents.length===totalEvents&&totalEvents>0?'var(--success)':'var(--navy)'};border-radius:3px;transition:width 0.4s;"></div>
+        </div>
+        <div style="font-size:12px;font-weight:700;color:${doneEvents.length===totalEvents&&totalEvents>0?'var(--success)':'var(--navy)'};">${totalEvents>0?Math.round(doneEvents.length/totalEvents*100):0}%</div>
+      </div>` +
+      sorted.slice(0, 5).map(e => {
+        const safeDate = (e.date||'').replace(/'/g, '');
+        const safeName = (e.name||'').replace(/'/g, "\\'").replace(/"/g, '&quot;');
+        return `<div class="timeline-item" style="opacity:${e.done?0.5:1};margin-bottom:2px;">
+          <div class="timeline-time" style="${e.done?'text-decoration:line-through;color:var(--gray);':''}">${e.time||'—'}</div>
+          <div class="timeline-content">
+            <div class="timeline-task-name" style="${e.done?'text-decoration:line-through;color:var(--gray);':''}">${e.name}</div>
+            <div class="timeline-task-meta">${e.duration} min</div>
+          </div>
+          <div onclick="quickMarkDone('${safeDate}','${safeName}')"
+            style="width:22px;height:22px;border-radius:50%;border:2px solid ${e.done?'var(--success)':'var(--border)'};
+                   background:${e.done?'var(--success)':'transparent'};
+                   display:flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;margin-left:8px;transition:all 0.2s;">
+            ${e.done?`<svg width="10" height="10" fill="none" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7" stroke="white" stroke-width="3" stroke-linecap="round"/></svg>`:''}
+          </div>
+        </div>`;
+      }).join('');
   }
 }
 
+function quickMarkDone(dateStr, name) {
+  const events = getData('planner_events',[]);
+  const idx = events.findIndex(e => e.date===dateStr && e.name===name);
+  if(idx<0) return;
+  events[idx].done = !events[idx].done;
+  setData('planner_events', events);
+  syncDoneEverywhere();
+}
+
 function startFocusTimer() {
-  const plan = getData('today_plan', null);
-  if (plan && plan.mainGoal) {
-    timerTask = plan.mainGoal;
-    timerSeconds = 45 * 60;
-    timerTotal = timerSeconds;
-    startTimer(timerTask, 45);
-    showPage('page-focus');
-  }
+  const plan = getData('today_plan', {});
+  const task = plan.mainGoal || 'Focus session';
+  const durStr = plan.mainGoalDur || '45 min';
+  let dur = 45;
+  if(durStr.includes('h30')) dur = parseInt(durStr)*60+30;
+  else if(durStr.includes('h')) dur = parseInt(durStr)*60;
+  else dur = parseInt(durStr)||45;
+  focusDuration = dur;
+  focusSecondsLeft = dur * 60;
+  timerTask = task;
+  showPage('page-focus'); // navigate first so elements exist
+  setTimeout(() => {
+    const tnInput = document.getElementById('focus-task-name');
+    if(tnInput) tnInput.value = task;
+    updateFocusDisplay();
+  }, 50);
 }
 function quickStart(type) {
   const plan = getData('today_plan', null);
@@ -1393,21 +1469,70 @@ let mydayRecapOpen = false;
 let addTaskBarOpen = false;
 
 const TASK_COLORS = [
-  { bg: '#1D2A62', text: 'white' },    // navy dark — main focus
-  { bg: '#2d3e8c', text: 'white' },    // navy medium
-  { bg: '#D1E8FF', text: '#1D2A62' },  // light blue
-  { bg: '#D1F0E8', text: '#065F46' },  // green
-  { bg: '#FEF3C7', text: '#92400E' },  // yellow
-  { bg: '#EDE9FE', text: '#5B21B6' },  // purple
-  { bg: '#FEE2E2', text: '#991B1B' },  // red
+  { bg: '#1D2A62', text: 'white' },   // navy dark — main goal
+  { bg: '#2D4A8C', text: 'white' },   // navy medium — non-negotiable
+  { bg: '#3D6BB5', text: 'white' },   // blue medium
+  { bg: '#5B8DD9', text: 'white' },   // blue
+  { bg: '#7FB3F5', text: '#1D2A62' }, // light blue — creative
+  { bg: '#B3D4FF', text: '#1D2A62' }, // pale blue
+  { bg: '#D6EAFF', text: '#1D2A62' }, // ice blue
 ];
+
+// Blue palette for all color pickers — all shades of blue
+const APP_COLORS = [
+  '#0C3060', // Nuit — Main goal
+  '#1D2A62', // Navy — Non-négociable
+  '#1E40AF', // Royal blue — Focus
+  '#2563EB', // Bleu vif — Réunion
+  '#3B82F6', // Blue — Travail
+  '#0EA5E9', // Sky — Rapide
+  '#4A90C4', // Steel blue — Small task
+  '#5B8DD9', // Cornflower — To-do
+  '#60A5FA', // Blue light — Perso
+  '#7FB3F5', // Bleu clair — Créativité
+  '#93C5FD', // Periwinkle — Détente
+  '#BFDBFE', // Ice blue — Repos
+];
+const APP_COLOR_LABELS = [
+  'Nuit','Navy','Royal','Vif','Travail','Sky','Steel','Cornflower','Perso','Créativité','Détente','Repos'
+];
+
+// Semantic color map for categories
+const CAL_CATEGORY_COLORS = {
+  'Main goal':    '#0C3060',
+  'Non-négociable': '#1D2A62',
+  'Focus':        '#1E40AF',
+  'Réunion':      '#2563EB',
+  'Travail':      '#3B82F6',
+  'Rapide':       '#0EA5E9',
+  'Small task':   '#4A90C4',
+  'To-do':        '#5B8DD9',
+  'Perso':        '#60A5FA',
+  'Créativité':   '#7FB3F5',
+  'Objectif':     '#1D2A62',
+  'Admin':        '#4A90C4',
+  'Santé':        '#0EA5E9',
+  'Apprentissage':'#3B82F6',
+  'Urgent':       '#0C3060',
+};
+
+function mfColorPicker(containerId, selectedColor, varName) {
+  return '<div style="display:flex;gap:6px;flex-wrap:wrap;" id="'+containerId+'">'+
+    APP_COLORS.map((c,i)=>
+      '<div title="'+APP_COLOR_LABELS[i]+'" onclick="document.querySelectorAll(\'#'+containerId+' .cp-dot\').forEach(x=>{x.style.outline=\'none\';});this.querySelector(\'.cp-dot\').style.outline=\'2px solid var(--navy)\';'+varName+'=\''+c+'\';" style="display:flex;flex-direction:column;align-items:center;gap:2px;cursor:pointer;">'+
+        '<div class="cp-dot" style="width:26px;height:26px;border-radius:50%;background:'+c+';outline:'+(selectedColor===c?'2px solid var(--navy)':'none')+';outline-offset:2px;transition:outline 0.1s;"></div>'+
+        '<div style="font-size:8px;color:var(--gray);max-width:28px;text-align:center;line-height:1.1;">'+APP_COLOR_LABELS[i]+'</div>'+
+      '</div>'
+    ).join('')+
+  '</div>';
+}
 
 function refreshMyDay() {
   // Date label
   const d = plannerCurrentDate;
   const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
   const days = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
-  document.getElementById('myday-date-label').textContent = `${days[d.getDay()]}, ${months[d.getMonth()]} ${d.getDate()}`;
+  document.getElementById('myday-date-label').textContent = '';
 
   // Morning recap items
   const plan = getData('today_plan', null);
@@ -1426,78 +1551,178 @@ function refreshMyDay() {
 
 function renderPlannerGrid() {
   const d = plannerCurrentDate;
-  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-  const days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  const months = ['Jan','Fév','Mar','Avr','Mai','Jun','Jul','Aoû','Sep','Oct','Nov','Déc'];
+  const days = ['Dim','Lun','Mar','Mer','Jeu','Ven','Sam'];
   document.getElementById('planner-nav-date').textContent = `${days[d.getDay()]}, ${months[d.getMonth()]} ${d.getDate()}`;
 
   const dateKey = d.toDateString();
   const allEvents = getData('planner_events', []);
-  const events = allEvents.filter(e => new Date(e.date).toDateString() === dateKey);
+  const todayEvents = allEvents.map((e,i)=>({...e,_realIdx:i})).filter(e => new Date(e.date).toDateString() === dateKey);
 
-  const hours = Array.from({length:17}, (_,i) => i + 6); // 06:00 to 22:00
-  const HOUR_HEIGHT = 64; // px per hour
+  const hours = Array.from({length:17}, (_,i) => i + 6);
+  const HOUR_HEIGHT = 64;
 
+  // ── Day recap bar (from morning plan) ─────────────────
+  const plan = getData('today_plan', {});
+  const isToday = d.toDateString() === new Date().toDateString();
+  let recapHTML = '';
+  if(isToday && (plan.mainGoal || plan.nonNeg || plan.smallTask)) {
+    const doneCount = todayEvents.filter(e=>e.done).length;
+    const totalCount = todayEvents.length;
+    recapHTML = `<div style="padding:10px 16px;background:rgba(29,42,98,0.04);border-bottom:1px solid var(--border);">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+        <div style="font-size:11px;font-weight:700;color:var(--navy);text-transform:uppercase;letter-spacing:0.8px;">Récapitulatif du jour</div>
+        ${totalCount>0?`<div style="font-size:11px;color:var(--gray);">${doneCount}/${totalCount} terminées</div>`:''}
+      </div>
+      <div style="display:flex;flex-direction:column;gap:4px;">
+        ${plan.mainGoal?`<div style="display:flex;align-items:center;gap:6px;"><div style="width:8px;height:8px;border-radius:50%;background:#1D2A62;flex-shrink:0;"></div><span style="font-size:12px;font-weight:600;">${plan.mainGoal}</span>${plan.mainGoalDur?`<span style="font-size:11px;color:var(--gray);">· ${plan.mainGoalDur}</span>`:''}</div>`:''}
+        ${plan.nonNeg?`<div style="display:flex;align-items:center;gap:6px;"><div style="width:8px;height:8px;border-radius:50%;background:#1A5E3A;flex-shrink:0;"></div><span style="font-size:12px;font-weight:600;">${plan.nonNeg}</span>${plan.nonNegDur?`<span style="font-size:11px;color:var(--gray);">· ${plan.nonNegDur}</span>`:''}</div>`:''}
+        ${plan.smallTask?`<div style="display:flex;align-items:center;gap:6px;"><div style="width:8px;height:8px;border-radius:50%;background:#4A55A2;flex-shrink:0;"></div><span style="font-size:12px;">${plan.smallTask}</span></div>`:''}
+        ${plan.rejection?`<div style="display:flex;align-items:center;gap:6px;"><div style="width:8px;height:8px;border-radius:0;transform:rotate(45deg);background:#F59E0B;flex-shrink:0;"></div><span style="font-size:12px;color:var(--gray);">${plan.rejection}</span></div>`:''}
+      </div>
+    </div>`;
+  }
+
+  // ── Grid HTML ──────────────────────────────────────────
   let gridHTML = `<div style="position:relative;">`;
-  // Hour lines
   hours.forEach(h => {
-    const label = `${String(h).padStart(2,'0')}:00`;
-    gridHTML += `
-      <div style="display:flex;min-height:${HOUR_HEIGHT}px;position:relative;">
-        <div style="width:52px;flex-shrink:0;padding:0 12px;padding-top:8px;font-size:11px;font-weight:600;color:var(--gray-light);">${label}</div>
-        <div style="flex:1;border-top:1px solid var(--border);position:relative;"></div>
-      </div>`;
+    gridHTML += `<div style="display:flex;min-height:${HOUR_HEIGHT}px;position:relative;" id="ph-${h}">
+      <div style="width:52px;flex-shrink:0;padding:0 12px;padding-top:8px;font-size:11px;font-weight:600;color:var(--gray-light);">${String(h).padStart(2,'0')}:00</div>
+      <div style="flex:1;border-top:1px solid var(--border);position:relative;cursor:crosshair;" onclick="plannerHourClick(event,${h})"></div>
+    </div>`;
   });
 
-  // Event blocks positioned absolutely
-  events.forEach((ev, idx) => {
-    const [eh, em] = (ev.time || '09:00').split(':').map(Number);
-    const startOffset = (eh - 6 + em/60) * HOUR_HEIGHT; // px from top
-    const durMin = parseInt(ev.duration) || 60;
-    const height = Math.max((durMin / 60) * HOUR_HEIGHT - 4, 28);
-    const colorIdx = idx % TASK_COLORS.length;
-    const col = TASK_COLORS[colorIdx];
-    const isDark = col.text === 'white';
+  // Event blocks
+  todayEvents.forEach((ev) => {
+    const [eh, em] = (ev.time||'09:00').split(':').map(Number);
+    const startOffset = (eh - 6 + em/60) * HOUR_HEIGHT;
+    const durMin = parseInt(ev.duration)||60;
+    const height = Math.max((durMin/60)*HOUR_HEIGHT - 4, 28);
+    const evColor = ev.color || APP_COLORS[todayEvents.indexOf(ev) % APP_COLORS.length] || '#1D2A62';
+    const isDone = ev.done;
     gridHTML += `
-      <div onclick="openPlannerTaskDetail(${idx})" style="
-        position:absolute;
-        top:${startOffset + 4}px;
-        left:64px;
-        right:12px;
-        height:${height}px;
-        background:${col.bg};
-        border-radius:12px;
-        padding:8px 12px;
-        cursor:pointer;
-        overflow:hidden;
-        box-shadow:0 2px 8px rgba(0,0,0,0.08);
-        transition:transform 0.15s;
-      " onmouseover="this.style.transform='scale(1.01)'" onmouseout="this.style.transform='scale(1)'">
-        <div style="font-size:13px;font-weight:700;color:${col.text};line-height:1.2;">${ev.name}</div>
-        ${height > 36 ? `<div style="font-size:11px;color:${isDark?'rgba(255,255,255,0.7)':'rgba(0,0,0,0.5)'};margin-top:2px;">${ev.time} · ${durMin} min</div>` : ''}
+      <div
+        data-real="${ev._realIdx}"
+        style="position:absolute;top:${startOffset+4}px;left:64px;right:12px;height:${height}px;
+               background:${evColor};border-radius:12px;padding:6px 10px;cursor:pointer;overflow:hidden;
+               box-shadow:0 2px 8px rgba(0,0,0,0.12);opacity:${isDone?0.5:1};touch-action:none;"
+        onclick="openPlannerTaskDetail(${ev._realIdx})"
+        onpointerdown="plannerBlockPointerDown(event,${ev._realIdx})"
+      >
+        <div style="display:flex;align-items:center;gap:4px;height:100%;">
+          <div style="flex:1;min-width:0;">
+            <div style="font-size:${height>40?'13':'11'}px;font-weight:700;color:white;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;${isDone?'text-decoration:line-through;opacity:0.7;':''}">${ev.name}</div>
+            ${height>38?`<div style="font-size:10px;color:rgba(255,255,255,0.7);margin-top:1px;">${ev.time} · ${durMin}min</div>`:''}
+          </div>
+          <div onclick="event.stopPropagation();markPlannerDone(${ev._realIdx})" style="width:18px;height:18px;border-radius:50%;border:2px solid rgba(255,255,255,0.5);display:flex;align-items:center;justify-content:center;flex-shrink:0;background:${isDone?'rgba(255,255,255,0.35)':'transparent'};">
+            ${isDone?`<svg width="8" height="8" fill="none" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7" stroke="white" stroke-width="3" stroke-linecap="round"/></svg>`:''}
+          </div>
+        </div>
       </div>`;
   });
 
   gridHTML += `</div>`;
-  const grid = document.getElementById('planner-hour-grid');
-  if (grid) grid.innerHTML = gridHTML;
 
-  // Scroll to 8am on first load
-  const scroll = document.getElementById('myday-planner-scroll');
-  if (scroll && scroll.scrollTop === 0) {
-    setTimeout(() => { scroll.scrollTop = 2 * HOUR_HEIGHT; }, 100);
+  const grid = document.getElementById('planner-hour-grid');
+  if(grid) {
+    const existing = grid.previousElementSibling;
+    // Insert recap before grid
+    let recapEl = document.getElementById('myday-day-recap');
+    if(!recapEl) {
+      recapEl = document.createElement('div');
+      recapEl.id = 'myday-day-recap';
+      grid.parentNode.insertBefore(recapEl, grid);
+    }
+    recapEl.innerHTML = recapHTML;
+    grid.innerHTML = gridHTML;
   }
+
+  // Scroll to 8am
+  const scroll = document.getElementById('myday-planner-scroll');
+  if(scroll && scroll.scrollTop === 0) setTimeout(()=>{scroll.scrollTop = 2*HOUR_HEIGHT;}, 100);
+
+  // Init drag on placed blocks
+  initPlannerBlockDrag();
 }
+
+// Click on empty hour slot → quick add
+function plannerHourClick(event, hour) {
+  // Ignore if it was a drag
+  if(window._plannerWasDrag) { window._plannerWasDrag=false; return; }
+  const min = Math.round((event.offsetY / 64) * 60 / 15) * 15;
+  const h = hour + Math.floor(min/60);
+  const m = min % 60;
+  const time = `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`;
+  window._newTaskColor = '#1D2A62';
+  openModal('Ajouter une tâche', `
+    <div style="font-size:12px;color:var(--gray);margin-bottom:12px;">${time}</div>
+    <div class="field"><label class="label">Nom</label><input class="input" id="phc-name" placeholder="Tâche..." onkeydown="if(event.key==='Enter'){event.preventDefault();document.getElementById('modal-save-btn').click();}"></div>
+    <div class="field"><label class="label">Durée</label>
+      <select class="input" id="phc-dur"><option>15 min</option><option>30 min</option><option selected>60 min</option><option>90 min</option><option>120 min</option></select>
+    </div>
+    <div class="field"><label class="label">Couleur</label>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;" id="phc-colors">
+        ${APP_COLORS.map((c,i)=>`<div onclick="document.querySelectorAll('#phc-colors div').forEach(x=>{x.style.borderColor='transparent';});this.style.borderColor='var(--navy)';window._newTaskColor='${c}';" style="width:24px;height:24px;border-radius:50%;background:${c};cursor:pointer;border:3px solid ${i===0?'var(--navy)':'transparent'};transition:all 0.15s;"></div>`).join('')}
+      </div>
+    </div>
+  `, () => {
+    const name = document.getElementById('phc-name').value.trim();
+    if(!name) return;
+    const dur = parseInt(document.getElementById('phc-dur').value)||60;
+    const events = getData('planner_events',[]);
+    events.push({name, time, duration:dur, type:'focus', date:plannerCurrentDate.toISOString(), color:window._newTaskColor||'#1D2A62'});
+    setData('planner_events',events);
+    window._newTaskColor=null;
+    renderPlannerGrid();
+  });
+}
+
+// Drag planner blocks
+function plannerBlockPointerDown(e, realIdx) {
+  const el = e.currentTarget;
+  let moved = false;
+  const origTop = parseFloat(el.style.top);
+  const startY = e.clientY;
+  const HOUR_HEIGHT = 64;
+
+  function onMove(ev) {
+    ev.preventDefault();
+    const dy = ev.clientY - startY;
+    if(Math.abs(dy) > 5) moved = true;
+    if(!moved) return;
+    window._plannerWasDrag = true;
+    const newTop = Math.max(0, origTop + dy);
+    el.style.top = newTop + 'px';
+    // Show snap time
+    const totalMin = Math.round((newTop / HOUR_HEIGHT) * 60 / 15) * 15;
+    let h = 6 + Math.floor(totalMin/60), m = totalMin%60;
+    if(h>21) h=21;
+    el.title = `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`;
+  }
+  function onUp(ev) {
+    document.removeEventListener('pointermove', onMove);
+    document.removeEventListener('pointerup', onUp);
+    if(!moved) return;
+    const newTop = parseFloat(el.style.top);
+    const totalMin = Math.round((newTop / HOUR_HEIGHT) * 60 / 15) * 15;
+    let h = 6 + Math.floor(totalMin/60), m = totalMin%60;
+    if(h>21) h=21;
+    const newTime = `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`;
+    const events = getData('planner_events',[]);
+    if(events[realIdx]) { events[realIdx].time = newTime; setData('planner_events',events); }
+    renderPlannerGrid();
+  }
+  document.addEventListener('pointermove', onMove, {passive:false});
+  document.addEventListener('pointerup', onUp, {once:true});
+}
+
+function initPlannerBlockDrag() {} // blocks now have inline onpointerdown
 
 function navigatePlannerDay(dir) {
   plannerCurrentDate = new Date(plannerCurrentDate);
   plannerCurrentDate.setDate(plannerCurrentDate.getDate() + dir);
   renderPlannerGrid();
-  document.getElementById('myday-date-label').textContent = (() => {
-    const d = plannerCurrentDate;
-    const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-    const days2 = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
-    return `${days2[d.getDay()]}, ${months[d.getMonth()]} ${d.getDate()}`;
-  })();
+  document.getElementById('myday-date-label').textContent = '';
 }
 
 function toggleMydayRecap() {
@@ -1506,54 +1731,151 @@ function toggleMydayRecap() {
 }
 
 function openAddTaskModal() {
-  addTaskBarOpen = !addTaskBarOpen;
-  document.getElementById('myday-add-task-bar').style.display = addTaskBarOpen ? 'block' : 'none';
+  const colors = APP_COLORS;
+  window._newTaskColor = '#1D2A62';
+  openModal('Ajouter une tâche', `
+    <div class="field"><label class="label">Nom</label><input class="input" id="myday-task-name" placeholder="Ex: Réunion client" onkeydown="if(event.key==='Enter'){event.preventDefault();document.getElementById('modal-save-btn').click();}"></div>
+    <div style="display:flex;gap:12px;">
+      <div class="field" style="flex:1;"><label class="label">Heure</label>
+        <select class="input" id="myday-task-time">
+          ${['06:00','07:00','08:00','09:00','10:00','11:00','12:00','13:00','14:00','15:00','16:00','17:00','18:00','19:00','20:00','21:00'].map(t=>`<option ${t==='09:00'?'selected':''}>${t}</option>`).join('')}
+        </select>
+      </div>
+      <div class="field" style="flex:1;"><label class="label">Durée</label>
+        <select class="input" id="myday-task-dur">
+          <option>15 min</option><option>30 min</option><option selected>45 min</option><option>60 min</option><option>90 min</option><option>120 min</option>
+        </select>
+      </div>
+    </div>
+    <div class="field"><label class="label">Couleur</label>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;" id="new-task-colors">
+        ${colors.map((c,i)=>`<div onclick="document.querySelectorAll('#new-task-colors div').forEach(x=>{x.style.borderColor='transparent';x.style.boxShadow='none';});this.style.borderColor='var(--navy)';this.style.boxShadow='0 0 0 2px white inset';window._newTaskColor='${c}';" style="width:26px;height:26px;border-radius:50%;background:${c};cursor:pointer;border:3px solid ${i===0?'var(--navy)':'transparent'};${i===0?'box-shadow:0 0 0 2px white inset;':''}transition:all 0.15s;"></div>`).join('')}
+      </div>
+    </div>
+  `, () => {
+    const name = document.getElementById('myday-task-name').value.trim();
+    const timeVal = document.getElementById('myday-task-time').value;
+    const durStr = document.getElementById('myday-task-dur').value;
+    const dur = parseInt(durStr)||45;
+    if(!name) return alert('Ajoute un nom');
+    const events = getData('planner_events',[]);
+    events.push({ name, time:timeVal, duration:dur, type:'focus', date:plannerCurrentDate.toISOString(), color:window._newTaskColor||'#1D2A62' });
+    setData('planner_events',events);
+    window._newTaskColor = null;
+    renderPlannerGrid();
+  });
 }
 
 function addPlannerTaskFromBar() {
-  const name = document.getElementById('myday-task-name').value.trim();
-  const timeVal = document.getElementById('myday-task-time').value;
-  const durStr = document.getElementById('myday-task-dur').value;
-  const dur = parseInt(durStr) || 45;
-  if (!name) { alert('Add a task name'); return; }
-  const events = getData('planner_events', []);
-  events.push({ name, time: timeVal, duration: dur, type: 'focus', date: plannerCurrentDate.toISOString() });
-  setData('planner_events', events);
-  document.getElementById('myday-task-name').value = '';
-  document.getElementById('myday-add-task-bar').style.display = 'none';
-  addTaskBarOpen = false;
+  openAddTaskModal();
+}
+
+function openPlannerTaskDetail(realIdx) {
+  const allEvents = getData('planner_events',[]);
+  const ev = allEvents[realIdx];
+  if(!ev) return;
+  const isDone = ev.done;
+  const colors = APP_COLORS;
+  openModal(ev.name, `
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;">
+      <div class="check-box" onclick="togglePlannerDone(${realIdx})" style="${isDone?'background:var(--success);border-color:var(--success);':''};cursor:pointer;width:22px;height:22px;flex-shrink:0;">
+        <svg fill="none" viewBox="0 0 24 24"><path stroke="${isDone?'white':'var(--border)'}" stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>
+      </div>
+      <div>
+        <div style="font-size:12px;color:var(--gray);">${ev.time} · ${ev.duration} min</div>
+        <div style="font-size:13px;font-weight:700;${isDone?'text-decoration:line-through;color:var(--gray);':''}">${isDone?'Terminé':'À faire'}</div>
+      </div>
+    </div>
+    <div style="margin-bottom:14px;">
+      <div style="font-size:11px;font-weight:700;color:var(--gray);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:8px;">Couleur</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;" id="pt-colors">
+        ${colors.map(c=>`<div onclick="setPlannerEventColor(${realIdx},'${c}')" style="width:24px;height:24px;border-radius:50%;background:${c};cursor:pointer;border:3px solid ${(ev.color||'#1D2A62')===c?'var(--navy)':'transparent'};transition:all 0.15s;"></div>`).join('')}
+      </div>
+    </div>
+    <div style="display:flex;gap:8px;margin-bottom:8px;">
+      <button onclick="markPlannerDone(${realIdx});closeModal();" style="flex:1;padding:11px;background:rgba(16,185,129,0.1);border:none;border-radius:12px;font-family:Urbanist,sans-serif;font-size:13px;font-weight:700;color:var(--success);cursor:pointer;">✓ Terminé</button>
+      <button onclick="startEventTimer('${ev.name.replace(/'/g,"\\'")}',${ev.duration});closeModal();" style="flex:1;padding:11px;background:var(--navy);border:none;border-radius:12px;font-family:Urbanist,sans-serif;font-size:13px;font-weight:700;color:white;cursor:pointer;">▶ Timer</button>
+    </div>
+    <div style="margin-bottom:8px;">
+      <button onclick="addWorkSession(${realIdx});closeModal();" style="width:100%;padding:10px;background:rgba(29,42,98,0.07);border:none;border-radius:12px;font-family:Urbanist,sans-serif;font-size:12px;font-weight:600;color:var(--navy);cursor:pointer;">+ Ajouter du temps (sans timer)</button>
+    </div>
+    <button onclick="deletePlannerEventByIdx(${realIdx});closeModal();" style="width:100%;padding:10px;background:rgba(239,68,68,0.07);border:none;border-radius:12px;font-family:Urbanist,sans-serif;font-size:12px;font-weight:600;color:var(--danger);cursor:pointer;">Supprimer</button>
+  `, null);
+  document.getElementById('modal-save-btn').style.display='none';
+}
+
+function togglePlannerDone(realIdx) {
+  const events=getData('planner_events',[]);
+  if(!events[realIdx])return;
+  events[realIdx].done=!events[realIdx].done;
+  setData('planner_events',events);
+  closeModal();
+  syncDoneEverywhere();
+}
+
+function markPlannerDone(realIdx) {
+  const events=getData('planner_events',[]);
+  if(!events[realIdx])return;
+  events[realIdx].done=true;
+  setData('planner_events',events);
+  syncDoneEverywhere();
+}
+
+// Syncs done state across ALL views immediately
+function syncDoneEverywhere() {
+  // Always refresh dashboard data (works even when not active — updates DOM elements in background)
+  refreshDashboard();
+  // Re-render planner if My Day is active or visible
+  renderPlannerGrid();
+  // Re-render calendar if it's the active page
+  const calPage = document.getElementById('page-calendar');
+  if(calPage && calPage.classList.contains('active')) renderCalendar();
+}
+
+function setPlannerEventColor(realIdx, color) {
+  const events=getData('planner_events',[]);
+  if(!events[realIdx])return;
+  events[realIdx].color=color;
+  setData('planner_events',events);
+  document.querySelectorAll('#pt-colors div').forEach(el=>{
+    el.style.borderColor=el.style.background===color?'var(--navy)':'transparent';
+  });
   renderPlannerGrid();
 }
 
-function openPlannerTaskDetail(idx) {
-  const dateKey = plannerCurrentDate.toDateString();
-  const allEvents = getData('planner_events', []);
-  const events = allEvents.filter(e => new Date(e.date).toDateString() === dateKey);
-  const ev = events[idx];
-  if (!ev) return;
-  openModal(ev.name, `
-    <div style="margin-bottom:16px;display:flex;gap:8px;">
-      <span class="badge badge-navy">${ev.time}</span>
-      <span class="badge badge-gray">${ev.duration} min</span>
+function addWorkSession(realIdx) {
+  const events=getData('planner_events',[]);
+  const ev=events[realIdx]; if(!ev)return;
+  openModal('Ajouter du temps', `
+    <div style="font-size:14px;font-weight:700;margin-bottom:12px;">${ev.name}</div>
+    <div class="field"><label class="label">Temps travaillé (min)</label>
+      <input type="number" class="input" id="aws-dur" placeholder="Ex: 30" min="1" onkeydown="if(event.key==='Enter'){event.preventDefault();document.getElementById('modal-save-btn').click();}">
     </div>
-    <div style="display:flex;flex-direction:column;gap:10px;">
-      <button class="btn btn-primary btn-full" onclick="startEventTimer('${ev.name.replace(/'/g,"\\'")}',${ev.duration});closeModal()">▶ Start timer</button>
-      <button class="btn btn-danger btn-full btn-sm" onclick="deletePlannerEvent('${ev.date}','${ev.name.replace(/'/g,"\\'")}');closeModal()">Delete</button>
+    <div class="field"><label class="label">Note (optionnel)</label>
+      <input class="input" id="aws-note" placeholder="Ce que tu as accompli...">
     </div>
-  `, null);
-  document.getElementById('modal-save-btn').style.display = 'none';
+  `, () => {
+    const dur=parseInt(document.getElementById('aws-dur').value)||0;
+    if(!dur) return;
+    logWorkSession(ev.name, dur);
+    // Optionally mark done if significant time logged
+  });
+}
+
+function deletePlannerEventByIdx(realIdx) {
+  const events=getData('planner_events',[]);
+  events.splice(realIdx,1);
+  setData('planner_events',events);
+  renderPlannerGrid();
 }
 
 function deletePlannerEvent(dateStr, name) {
-  const events = getData('planner_events', []);
-  const idx = events.findIndex(e => e.date === dateStr && e.name === name);
-  if (idx > -1) events.splice(idx, 1);
-  setData('planner_events', events);
+  const events=getData('planner_events',[]);
+  const idx=events.findIndex(e=>e.date===dateStr&&e.name===name);
+  if(idx>-1)events.splice(idx,1);
+  setData('planner_events',events);
   renderPlannerGrid();
 }
-
-// Keep old addPlannerEvent as alias
-function addPlannerEvent() { openAddTaskModal(); }
 
 // Update float timer to also show in My Day bar
 function updateMydayCurrentAction() {
@@ -1576,7 +1898,7 @@ const CAL_MONTHS = ['January','February','March','April','May','June','July','Au
 const CAL_MONTHS_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 const CAL_DAYS = ['SUN','MON','TUE','WED','THU','FRI','SAT'];
 const CAL_DAYS_SHORT = ['S','M','T','W','T','F','S'];
-const EVENT_DOT_COLORS = ['#1D2A62','#10B981','#F59E0B','#8B5CF6','#EF4444','#3B82F6'];
+const EVENT_DOT_COLORS = ['#0C3060','#1D2A62','#1E40AF','#2563EB','#3B82F6','#0EA5E9','#4A90C4','#5B8DD9','#60A5FA','#7FB3F5'];
 
 function renderCalendar() {
   const body = document.getElementById('cal-body');
@@ -1607,13 +1929,22 @@ function renderCalDay(body) {
 
   let evBlocks = '';
   events.forEach((ev, idx) => {
+    const allEvs = getData('planner_events',[]);
+    const realIdx = allEvs.findIndex(e=>e.name===ev.name&&e.time===ev.time&&e.date===ev.date);
     const [eh, em] = (ev.time || '09:00').split(':').map(Number);
     const top = (eh - 5 + em/60) * HOUR_H;
     const h = Math.max((parseInt(ev.duration)||60)/60 * HOUR_H - 4, 26);
-    const col = TASK_COLORS[idx % TASK_COLORS.length];
-    evBlocks += `<div onclick="calEventDetail(${idx})" style="position:absolute;top:${top+2}px;left:64px;right:12px;height:${h}px;background:${col.bg};border-radius:10px;padding:7px 10px;cursor:pointer;overflow:hidden;">
-      <div style="font-size:12px;font-weight:700;color:${col.text};">${ev.name}</div>
-      ${h>30?`<div style="font-size:10px;color:${col.text==='white'?'rgba(255,255,255,0.7)':'rgba(0,0,0,0.5)'};">${ev.time} - ${durEnd(ev.time, ev.duration)}</div>`:''}
+    const evColor = ev.color || APP_COLORS[idx % APP_COLORS.length];
+    const isLight = evColor === '#B3D4FF'||evColor === '#93C5FD'||evColor === '#BFDBFE'||evColor === '#D6EAFF';
+    const textCol = isLight ? '#1D2A62' : 'white';
+    const isDone = ev.done;
+    evBlocks += `<div onclick="calEventDetail(${idx})" style="position:absolute;top:${top+2}px;left:64px;right:12px;height:${h}px;background:${evColor};border-radius:10px;padding:6px 10px;cursor:pointer;overflow:hidden;opacity:${isDone?0.55:1};touch-action:none;"
+      onpointerdown="calBlockPointerDown(event,${realIdx>=0?realIdx:idx})">
+      <div style="display:flex;align-items:center;gap:4px;">
+        <div style="font-size:12px;font-weight:700;color:${textCol};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;">${ev.name}</div>
+        ${isDone?`<svg width="10" height="10" fill="none" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7" stroke="${textCol}" stroke-width="3" stroke-linecap="round"/></svg>`:''}
+      </div>
+      <div style="font-size:10px;color:${textCol==='white'?'rgba(255,255,255,0.75)':'rgba(29,42,98,0.6)'};">${ev.time}${h>30?' · '+durEnd(ev.time, ev.duration):''}</div>
     </div>`;
   });
 
@@ -1863,29 +2194,138 @@ function calEventDetail(idx) {
   const evs = getEventsForDate(calCurrentDate);
   const ev = evs[idx];
   if(!ev) return;
-  openModal(ev.name, `<div class="badge badge-navy">${ev.time}</div> <div class="badge badge-gray" style="margin-left:6px;">${ev.duration} min</div>`, null);
-  document.getElementById('modal-save-btn').style.display = 'none';
+  const allEvents = getData('planner_events',[]);
+  const realIdx = allEvents.findIndex(e=>e===ev||(e.name===ev.name&&e.time===ev.time&&e.date===ev.date));
+  const isDone = ev.done;
+  const colors = APP_COLORS;
+  openModal(ev.name,
+    `<div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
+      <div class="check-box ${isDone?'':''}${isDone?' checked':''}" id="ced-done-check" onclick="toggleCalEventDone(${realIdx})" style="${isDone?'background:var(--success);border-color:var(--success);':''};cursor:pointer;width:22px;height:22px;">
+        <svg fill="none" viewBox="0 0 24 24"><path stroke="${isDone?'white':'var(--border)'}" stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>
+      </div>
+      <div>
+        <div style="font-size:11px;color:var(--gray);">${ev.time} · ${ev.duration} min</div>
+        <div style="font-size:13px;font-weight:700;${isDone?'text-decoration:line-through;color:var(--gray);':''}">${isDone?'Terminé':'À faire'}</div>
+      </div>
+    </div>
+    <div style="margin-bottom:14px;">
+      <div style="font-size:11px;font-weight:700;color:var(--gray);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:8px;">Couleur</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;" id="ced-colors">
+        ${colors.map(c=>`<div onclick="setCalEventColor(${realIdx},'${c}')" style="width:24px;height:24px;border-radius:50%;background:${c};cursor:pointer;border:3px solid ${ev.color===c?'var(--navy)':'transparent'};box-shadow:${ev.color===c?'0 0 0 2px white inset':'none'};transition:all 0.15s;"></div>`).join('')}
+      </div>
+    </div>
+    <div style="display:flex;gap:8px;">
+      <button onclick="markCalEventDone(${realIdx});closeModal();" style="flex:1;padding:11px;background:rgba(16,185,129,0.1);border:none;border-radius:12px;font-family:Urbanist,sans-serif;font-size:13px;font-weight:700;color:var(--success);cursor:pointer;">✓ Fait</button>
+      <button onclick="startCalEventTimer(${realIdx});closeModal();" style="flex:1;padding:11px;background:var(--navy);border:none;border-radius:12px;font-family:Urbanist,sans-serif;font-size:13px;font-weight:700;color:white;cursor:pointer;">▶ Timer</button>
+    </div>
+    <div style="margin-top:8px;">
+      <button onclick="deleteCalEvent(${realIdx});closeModal();" style="width:100%;padding:10px;background:rgba(239,68,68,0.07);border:none;border-radius:12px;font-family:Urbanist,sans-serif;font-size:12px;font-weight:600;color:var(--danger);cursor:pointer;">Supprimer</button>
+    </div>`,
+    null
+  );
+  document.getElementById('modal-save-btn').style.display='none';
+}
+
+function toggleCalEventDone(realIdx) {
+  const events = getData('planner_events',[]);
+  if(!events[realIdx]) return;
+  events[realIdx].done = !events[realIdx].done;
+  setData('planner_events', events);
+  closeModal();
+  syncDoneEverywhere();
+}
+
+function markCalEventDone(realIdx) {
+  const events = getData('planner_events',[]);
+  if(!events[realIdx]) return;
+  events[realIdx].done = true;
+  setData('planner_events', events);
+  syncDoneEverywhere();
+}
+
+function setCalEventColor(realIdx, color) {
+  const events = getData('planner_events',[]);
+  if(!events[realIdx]) return;
+  events[realIdx].color = color;
+  setData('planner_events', events);
+  // Update color swatches in modal without closing
+  document.querySelectorAll('#ced-colors div').forEach(el=>{
+    el.style.borderColor = el.style.background===color?'var(--navy)':'transparent';
+    el.style.boxShadow = el.style.background===color?'0 0 0 2px white inset':'none';
+  });
+  renderCalendar();
+}
+
+function startCalEventTimer(realIdx) {
+  const events = getData('planner_events',[]);
+  const ev = events[realIdx]; if(!ev) return;
+  document.getElementById('focus-task-name').value = ev.name;
+  focusDuration = parseInt(ev.duration)||45;
+  focusSecondsLeft = focusDuration*60;
+  timerTask = ev.name;
+  updateFocusDisplay();
+  showPage('page-focus');
+}
+
+function deleteCalEvent(realIdx) {
+  const events = getData('planner_events',[]);
+  events.splice(realIdx,1);
+  setData('planner_events',events);
+  renderCalendar();
+}
+
+function calBlockPointerDown(e, realIdx) {
+  let moved = false;
+  const el = e.currentTarget;
+  const startY = e.clientY;
+  const origTop = parseFloat(el.style.top);
+  const HOUR_H = 60;
+  function onMove(ev) {
+    const dy = ev.clientY - startY;
+    if(Math.abs(dy)>6) { moved = true; e.stopPropagation(); }
+    if(!moved) return;
+    el.style.top = Math.max(0, origTop+dy)+'px';
+  }
+  function onUp() {
+    document.removeEventListener('pointermove', onMove);
+    document.removeEventListener('pointerup', onUp);
+    if(!moved) return;
+    const newTop = parseFloat(el.style.top);
+    const totalMin = Math.round((newTop/HOUR_H)*60/15)*15;
+    let h = 5+Math.floor(totalMin/60), m = totalMin%60;
+    if(h>21) h=21;
+    const newTime = `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`;
+    const events = getData('planner_events',[]);
+    if(events[realIdx]) { events[realIdx].time=newTime; setData('planner_events',events); }
+    renderCalendar();
+  }
+  document.addEventListener('pointermove', onMove, {passive:false});
+  document.addEventListener('pointerup', onUp, {once:true});
 }
 
 function openCalendarAddEvent() {
-  // Pre-fill with selected calendar date
-  openModal('Add Event', `
-    <div class="field"><label class="label">Task name</label><input class="input" id="cal-ev-name" placeholder="What do you want to do?"></div>
+  window._calSelColor = '#1D2A62';
+  openModal('Ajouter un événement', `
+    <div class="field"><label class="label">Tâche</label><input class="input" id="cal-ev-name" placeholder="Que veux-tu faire ?" onkeydown="if(event.key==='Enter'){event.preventDefault();document.getElementById('modal-save-btn').click();}"></div>
     <div class="field"><label class="label">Date</label><input type="date" class="input" id="cal-ev-date" value="${calCurrentDate.toISOString().split('T')[0]}"></div>
     <div style="display:flex;gap:12px;">
-      <div class="field" style="flex:1;"><label class="label">Time</label><input type="time" class="input" id="cal-ev-time" value="09:00"></div>
-      <div class="field" style="flex:1;"><label class="label">Duration (min)</label><input type="number" class="input" id="cal-ev-dur" value="60" min="5"></div>
+      <div class="field" style="flex:1;"><label class="label">Heure</label><input type="time" class="input" id="cal-ev-time" value="09:00"></div>
+      <div class="field" style="flex:1;"><label class="label">Durée (min)</label><input type="number" class="input" id="cal-ev-dur" value="60" min="5"></div>
+    </div>
+    <div class="field"><label class="label">Couleur (tons bleus)</label>
+      ${mfColorPicker('cal-cp','#1D2A62','window._calSelColor')}
     </div>
   `, () => {
     const name = document.getElementById('cal-ev-name').value.trim();
     const dateStr = document.getElementById('cal-ev-date').value;
     const time = document.getElementById('cal-ev-time').value;
     const dur = parseInt(document.getElementById('cal-ev-dur').value)||60;
-    if(!name) return alert('Add a task name');
+    if(!name) return alert('Ajoute un nom');
     const events = getData('planner_events', []);
     const evDate = dateStr ? new Date(dateStr + 'T12:00:00') : calCurrentDate;
-    events.push({ name, time, duration: dur, type:'focus', date: evDate.toISOString() });
+    events.push({ name, time, duration: dur, type:'focus', date: evDate.toISOString(), color: window._calSelColor||'#1D2A62' });
     setData('planner_events', events);
+    window._calSelColor = null;
     renderCalendar();
   });
 }
@@ -1933,6 +2373,70 @@ function mfSlSelect(key, val, ids) {
   // activate matching id
   const activeId = ids.find(id => id.toLowerCase().includes(val.toLowerCase().replace('é','e').replace('î','i')));
   if(activeId) { const e = document.getElementById(activeId); if(e) e.classList.add('active'); }
+}
+
+// Morning flow helpers — must be defined before switch cases use them
+function mfTodoPills() {
+  const allTodos = [
+    ...getData('todos',[]).filter(t=>!t.done).map(t=>typeof t==='string'?t:(t.text||t.name||'')),
+    ...getData('general_todos',[]).filter(t=>!t.done).map(t=>t.name||'')
+  ].filter(Boolean);
+  if(!allTodos.length) return '<div style="font-size:12px;color:var(--gray-light);font-style:italic;">Ta liste to-do est vide</div>';
+  return '<div style="font-size:11px;font-weight:700;color:var(--gray);margin-bottom:6px;">Sélectionner depuis ta liste :</div>'+
+    '<div style="display:flex;flex-wrap:wrap;gap:6px;">'+
+    allTodos.slice(0,8).map(t=>'<div onclick="document.getElementById(\'m-todo\').value=\''+t.replace(/'/g,'').replace(/"/g,'')+'\'" style="padding:5px 10px;background:var(--surface);border-radius:20px;font-size:11px;color:var(--navy);cursor:pointer;border:1px solid var(--border);">'+(t.length>28?t.substring(0,28)+'...':t)+'</div>').join('')+'</div>';
+}
+
+function mfExtraTasksSection(d) {
+  const tasks = d.extraTasks||[];
+  return '<div style="background:var(--white);border-radius:14px;padding:14px;border:1px solid var(--border);margin-top:10px;">'+
+    '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">'+
+      '<div style="font-size:11px;font-weight:700;color:var(--navy);text-transform:uppercase;letter-spacing:0.8px;">Autres tâches</div>'+
+      '<button onclick="mfAddExtraTask()" style="background:var(--navy);color:white;border:none;border-radius:8px;padding:4px 10px;font-family:Urbanist,sans-serif;font-size:11px;font-weight:700;cursor:pointer;">+ Tâche</button>'+
+    '</div>'+
+    '<div id="mf-extra-tasks-list">'+
+    tasks.map((t,i)=>'<div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;">'+
+      '<input class="input" value="'+(t.name||'')+'" placeholder="Tâche..." style="flex:1;font-size:13px;" onchange="morningData.extraTasks['+i+'].name=this.value" onkeydown="if(event.key===\'Enter\')event.preventDefault()">'+
+      '<input type="number" class="input" value="'+(t.duration||15)+'" style="width:52px;font-size:12px;" placeholder="min" onchange="morningData.extraTasks['+i+'].duration=parseInt(this.value)||15">'+
+      '<span style="font-size:10px;color:var(--gray);">min</span>'+
+      '<button onclick="mfRemoveExtraTask('+i+')" style="background:none;border:none;cursor:pointer;color:var(--gray-light);padding:0;"><svg width="13" height="13" fill="none" viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button>'+
+    '</div>').join('')+
+    (tasks.length===0?'<div style="font-size:12px;color:var(--gray-light);font-style:italic;">Appuie sur + pour ajouter des petites tâches</div>':'')+
+    '</div></div>';
+}
+
+function mfAddExtraTask() {
+  if(!morningData.extraTasks) morningData.extraTasks = [];
+  morningData.extraTasks.push({ name:'', duration:15 });
+  // re-render just the extra tasks list
+  const el = document.getElementById('mf-extra-tasks-list');
+  if(el) {
+    const tasks = morningData.extraTasks;
+    el.innerHTML = tasks.map((t,i)=>`<div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;">
+      <input class="input" value="${t.name||''}" placeholder="Tâche..." style="flex:1;font-size:13px;" onchange="morningData.extraTasks[${i}].name=this.value" onkeydown="if(event.key==='Enter')event.preventDefault()">
+      <input type="number" class="input" value="${t.duration||15}" style="width:52px;font-size:12px;" placeholder="min" onchange="morningData.extraTasks[${i}].duration=parseInt(this.value)||15">
+      <span style="font-size:10px;color:var(--gray);">min</span>
+      <button onclick="mfRemoveExtraTask(${i})" style="background:none;border:none;cursor:pointer;color:var(--gray-light);padding:0;"><svg width="13" height="13" fill="none" viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button>
+    </div>`).join('');
+    // Focus the new input
+    setTimeout(()=>{ const inputs=el.querySelectorAll('input[type="text"],input:not([type])'); if(inputs.length) inputs[inputs.length-1].focus(); }, 50);
+  }
+}
+
+function mfRemoveExtraTask(idx) {
+  if(!morningData.extraTasks) return;
+  morningData.extraTasks.splice(idx,1);
+  const el = document.getElementById('mf-extra-tasks-list');
+  if(el) {
+    const tasks = morningData.extraTasks;
+    el.innerHTML = tasks.length===0?'<div style="font-size:12px;color:var(--gray-light);font-style:italic;">Appuie sur + pour ajouter des petites tâches</div>':
+      tasks.map((t,i)=>`<div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;">
+        <input class="input" value="${t.name||''}" placeholder="Tâche..." style="flex:1;font-size:13px;" onchange="morningData.extraTasks[${i}].name=this.value">
+        <input type="number" class="input" value="${t.duration||15}" style="width:52px;font-size:12px;" placeholder="min" onchange="morningData.extraTasks[${i}].duration=parseInt(this.value)||15">
+        <span style="font-size:10px;color:var(--gray);">min</span>
+        <button onclick="mfRemoveExtraTask(${i})" style="background:none;border:none;cursor:pointer;color:var(--gray-light);padding:0;"><svg width="13" height="13" fill="none" viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button>
+      </div>`).join('');
+  }
 }
 
 function buildMorningSteps() {
@@ -2101,65 +2605,42 @@ function renderMorningStep() {
       body.innerHTML = `
         <div style="margin-bottom:20px;">
           <div style="font-size:22px;font-weight:800;margin-bottom:4px;">Today's goals</div>
-          <div style="font-size:14px;color:var(--gray);">Définis tes priorités + le temps estimé pour chacune.</div>
+          <div style="font-size:14px;color:var(--gray);">Définis tes priorités + le temps estimé.</div>
         </div>
-
-        <!-- Main goal -->
         <div style="background:var(--navy);border-radius:16px;padding:16px;margin-bottom:12px;">
           <div style="font-size:11px;font-weight:700;color:rgba(255,255,255,0.6);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:8px;">Main goal — le ONE thing</div>
-          <input class="input" id="m-main" placeholder="What must get done today?" value="${d.mainGoal||''}" style="background:rgba(255,255,255,0.12);border:none;color:white;font-weight:700;font-size:15px;margin-bottom:10px;::placeholder{color:rgba(255,255,255,0.5)}">
+          <input class="input" id="m-main" placeholder="What must get done today?" value="${d.mainGoal||''}" style="background:rgba(255,255,255,0.12);border:none;color:white;font-weight:700;font-size:15px;margin-bottom:10px;">
           <div style="display:flex;align-items:center;gap:8px;">
-            <svg width="13" height="13" fill="none" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" stroke="rgba(255,255,255,0.5)" stroke-width="2"/><path d="M12 7v5l3 3" stroke="rgba(255,255,255,0.5)" stroke-width="2" stroke-linecap="round"/></svg>
-            <span style="font-size:12px;color:rgba(255,255,255,0.6);">Durée estimée</span>
+            <span style="font-size:12px;color:rgba(255,255,255,0.6);">Durée</span>
             <select class="input" id="m-main-dur" style="flex:1;padding:7px 10px;font-size:13px;background:rgba(255,255,255,0.12);border:none;color:white;font-weight:600;">${['30 min','45 min','1h','1h30','2h','3h','4h'].map(t=>`<option ${d.mainGoalDur===t?'selected':''}>${t}</option>`).join('')}</select>
           </div>
         </div>
-
-        <!-- Non-negotiable -->
         <div style="background:var(--white);border-radius:14px;padding:14px;border:1px solid var(--border);margin-bottom:10px;">
-          <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;">
-            <svg width="12" height="12" fill="none" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2" stroke="var(--navy)" stroke-width="2"/><path d="M8 11V7a4 4 0 018 0v4" stroke="var(--navy)" stroke-width="2" stroke-linecap="round"/></svg>
-            <span style="font-size:11px;font-weight:700;color:var(--navy);text-transform:uppercase;letter-spacing:0.8px;">Non-negotiable</span>
-          </div>
+          <div style="font-size:11px;font-weight:700;color:var(--navy);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:8px;">Non-negotiable</div>
           <input class="input" id="m-nonneg" placeholder="Ce que tu ne peux pas sauter..." value="${d.nonNeg||''}" style="margin-bottom:8px;">
           <div style="display:flex;align-items:center;gap:8px;">
-            <svg width="13" height="13" fill="none" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" stroke="var(--gray)" stroke-width="2"/><path d="M12 7v5l3 3" stroke="var(--gray)" stroke-width="2" stroke-linecap="round"/></svg>
-            <span style="font-size:12px;color:var(--gray);">Durée estimée</span>
+            <span style="font-size:12px;color:var(--gray);">Durée</span>
             <select class="input" id="m-nonneg-dur" style="flex:1;padding:7px 10px;font-size:13px;">${['15 min','30 min','45 min','1h','1h30','2h'].map(t=>`<option ${d.nonNegDur===t?'selected':''}>${t}</option>`).join('')}</select>
           </div>
         </div>
-
-        <!-- Small task -->
         <div style="background:var(--white);border-radius:14px;padding:14px;border:1px solid var(--border);margin-bottom:10px;">
-          <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;">
-            <svg width="12" height="12" fill="none" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" stroke="var(--navy)" stroke-width="2" stroke-linecap="round"/></svg>
-            <span style="font-size:11px;font-weight:700;color:var(--navy);text-transform:uppercase;letter-spacing:0.8px;">1 small task max</span>
-          </div>
+          <div style="font-size:11px;font-weight:700;color:var(--navy);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:8px;">1 small task max</div>
           <input class="input" id="m-small" placeholder="Une petite victoire..." value="${d.smallTask||''}" style="margin-bottom:8px;">
           <div style="display:flex;align-items:center;gap:8px;">
-            <svg width="13" height="13" fill="none" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" stroke="var(--gray)" stroke-width="2"/><path d="M12 7v5l3 3" stroke="var(--gray)" stroke-width="2" stroke-linecap="round"/></svg>
-            <span style="font-size:12px;color:var(--gray);">Durée estimée</span>
+            <span style="font-size:12px;color:var(--gray);">Durée</span>
             <select class="input" id="m-small-dur" style="flex:1;padding:7px 10px;font-size:13px;">${['15 min','20 min','30 min','45 min','1h'].map(t=>`<option ${d.smallTaskDur===t?'selected':''}>${t}</option>`).join('')}</select>
           </div>
         </div>
-
-        <!-- From to-do list -->
         <div style="background:var(--white);border-radius:14px;padding:14px;border:1px solid var(--border);margin-bottom:10px;">
-          <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;">
-            <svg width="12" height="12" fill="none" viewBox="0 0 24 24"><path d="M9 11l3 3L22 4" stroke="var(--navy)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" stroke="var(--navy)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            <span style="font-size:11px;font-weight:700;color:var(--navy);text-transform:uppercase;letter-spacing:0.8px;">1 to-do</span>
-          </div>
+          <div style="font-size:11px;font-weight:700;color:var(--navy);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:8px;">1 to-do</div>
           <input class="input" id="m-todo" placeholder="Piocher dans ta liste..." value="${d.todo||''}" style="margin-bottom:8px;">
-          <div style="display:flex;align-items:center;gap:8px;">
-            <svg width="13" height="13" fill="none" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" stroke="var(--gray)" stroke-width="2"/><path d="M12 7v5l3 3" stroke="var(--gray)" stroke-width="2" stroke-linecap="round"/></svg>
-            <span style="font-size:12px;color:var(--gray);">Durée estimée</span>
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+            <span style="font-size:12px;color:var(--gray);">Durée</span>
             <select class="input" id="m-todo-dur" style="flex:1;padding:7px 10px;font-size:13px;">${['15 min','20 min','30 min','45 min','1h'].map(t=>`<option ${d.todoDur===t?'selected':''}>${t}</option>`).join('')}</select>
           </div>
-          ${getData('general_todos',[]).filter(t=>!t.done).length>0?`
-          <div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:6px;">
-            ${getData('general_todos',[]).filter(t=>!t.done).slice(0,4).map(t=>`<div onclick="document.getElementById('m-todo').value='${t.name.replace(/'/g,'')}'" style="padding:4px 10px;background:var(--surface);border-radius:20px;font-size:11px;color:var(--navy);cursor:pointer;border:1px solid var(--border);">${t.name.length>25?t.name.substring(0,25)+'...':t.name}</div>`).join('')}
-          </div>`:''}
+          ${mfTodoPills()}
         </div>
+        ${mfExtraTasksSection(d)}
       `;
       break;
     case 'chaos-goals':
@@ -2172,6 +2653,7 @@ function renderMorningStep() {
         <div class="field"><label class="label">1 obligation</label><input class="input" id="m-oblig" placeholder="Is there something you MUST do?" value="${d.obligation||''}"></div>
         <div class="field"><label class="label">1 habitude à garder</label><input class="input" id="m-habit-keep" placeholder="Journal / walk / read 5 min..." value="${d.habitKeep||''}"></div>
         <div class="field"><label class="label">Plan to sleep early</label><input class="input" id="m-sleep-plan" placeholder="What will you do to sleep on time?" value="${d.sleepPlan||''}"></div>
+        ${mfExtraTasksSection(d)}
       `;
       break;
     case 'balanced-goals':
@@ -2180,36 +2662,60 @@ function renderMorningStep() {
           <div style="font-size:22px;font-weight:800;margin-bottom:4px;">Balanced day</div>
           <div style="font-size:14px;color:var(--gray);">Work well. Live well.</div>
         </div>
-        <div class="field">
-          <label class="label">Main goal</label>
-          <input class="input" id="m-main" placeholder="Your main focus today" value="${d.mainGoal||''}" style="margin-bottom:8px;">
+        <div style="background:var(--navy);border-radius:16px;padding:16px;margin-bottom:12px;">
+          <div style="font-size:11px;font-weight:700;color:rgba(255,255,255,0.6);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:8px;">Main goal</div>
+          <input class="input" id="m-main" placeholder="Your main focus today" value="${d.mainGoal||''}" style="background:rgba(255,255,255,0.12);border:none;color:white;font-weight:700;font-size:15px;margin-bottom:10px;">
           <div style="display:flex;align-items:center;gap:8px;">
-            <svg width="14" height="14" fill="none" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" stroke="var(--gray)" stroke-width="2"/><path d="M12 7v5l3 3" stroke="var(--gray)" stroke-width="2" stroke-linecap="round"/></svg>
-            <span style="font-size:12px;color:var(--gray);">Est. time</span>
-            <select class="input" id="m-main-dur" style="flex:1;padding:8px 12px;font-size:13px;">${['30 min','45 min','1h','1h30','2h','3h'].map(t=>`<option>${t}</option>`).join('')}</select>
+            <span style="font-size:12px;color:rgba(255,255,255,0.6);">Durée</span>
+            <select class="input" id="m-main-dur" style="flex:1;padding:7px 10px;font-size:13px;background:rgba(255,255,255,0.12);border:none;color:white;font-weight:600;">${['30 min','45 min','1h','1h30','2h','3h'].map(t=>`<option ${d.mainGoalDur===t?'selected':''}>${t}</option>`).join('')}</select>
           </div>
         </div>
-        <div class="field"><label class="label">Non-negotiable</label><input class="input" id="m-nonneg" placeholder="What can't you skip?" value="${d.nonNeg||''}"></div>
-        <div class="field"><label class="label">1 small task max</label><input class="input" id="m-small" placeholder="Just one..." value="${d.smallTask||''}"></div>
-        <div class="field"><label class="label">1 to-do</label><input class="input" id="m-todo" placeholder="Pick one from your list" value="${d.todo||''}"></div>
+        <div style="background:var(--white);border-radius:14px;padding:14px;border:1px solid var(--border);margin-bottom:10px;">
+          <div style="font-size:11px;font-weight:700;color:var(--navy);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:8px;">Non-negotiable</div>
+          <input class="input" id="m-nonneg" placeholder="Ce que tu ne peux pas sauter..." value="${d.nonNeg||''}" style="margin-bottom:8px;">
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span style="font-size:12px;color:var(--gray);">Durée</span>
+            <select class="input" id="m-nonneg-dur" style="flex:1;padding:7px 10px;font-size:13px;">${['15 min','30 min','45 min','1h','1h30'].map(t=>`<option ${d.nonNegDur===t?'selected':''}>${t}</option>`).join('')}</select>
+          </div>
+        </div>
+        <div style="background:var(--white);border-radius:14px;padding:14px;border:1px solid var(--border);margin-bottom:10px;">
+          <div style="font-size:11px;font-weight:700;color:var(--navy);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:8px;">1 small task max</div>
+          <input class="input" id="m-small" placeholder="Just one..." value="${d.smallTask||''}" style="margin-bottom:8px;">
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span style="font-size:12px;color:var(--gray);">Durée</span>
+            <select class="input" id="m-small-dur" style="flex:1;padding:7px 10px;font-size:13px;">${['15 min','20 min','30 min','45 min','1h'].map(t=>`<option ${d.smallTaskDur===t?'selected':''}>${t}</option>`).join('')}</select>
+          </div>
+        </div>
+        <div style="background:var(--white);border-radius:14px;padding:14px;border:1px solid var(--border);margin-bottom:10px;">
+          <div style="font-size:11px;font-weight:700;color:var(--navy);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:8px;">1 to-do</div>
+          <input class="input" id="m-todo" placeholder="Pick one from your list" value="${d.todo||''}" style="margin-bottom:8px;">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+            <span style="font-size:12px;color:var(--gray);">Durée</span>
+            <select class="input" id="m-todo-dur" style="flex:1;padding:7px 10px;font-size:13px;">${['15 min','20 min','30 min','45 min','1h'].map(t=>`<option ${d.todoDur===t?'selected':''}>${t}</option>`).join('')}</select>
+          </div>
+          ${mfTodoPills()}
+        </div>
+        ${mfExtraTasksSection(d)}
       `;
       break;
     case 'creative':
       body.innerHTML = `
         <div style="margin-bottom:24px;">
           <div style="font-size:22px;font-weight:800;margin-bottom:4px;">Creative time</div>
-          <div style="font-size:14px;color:var(--gray);">20–45 min for your soul.</div>
+          <div style="font-size:14px;color:var(--gray);">20–90 min pour ton âme.</div>
         </div>
-        <div class="field"><label class="label">Choose your creative activity</label>
+        <div class="field"><label class="label">Activité créative</label>
           <div class="chips-row">
-            ${['Peinture','Broderie','Saxophone','Dessin','Autre'].map(c => `<div class="chip ${d.creative===c?'selected':''}" onclick="this.parentNode.querySelectorAll('.chip').forEach(x=>x.classList.remove('selected'));this.classList.add('selected');morningData.creative='${c}'">${c}</div>`).join('')}
+            ${['Peinture','Broderie','Saxophone','Dessin','Écriture','Autre'].map(c => `<div class="chip ${d.creative===c?'selected':''}" onclick="this.parentNode.querySelectorAll('.chip').forEach(x=>x.classList.remove('selected'));this.classList.add('selected');morningData.creative='${c}'">${c}</div>`).join('')}
           </div>
         </div>
-        <div class="field"><label class="label">Duration</label>
-          <div class="chips-row">
-            <div class="chip selected">20 min</div>
-            <div class="chip">30 min</div>
-            <div class="chip">45 min</div>
+        <div class="field"><label class="label">Durée</label>
+          <div style="display:flex;align-items:center;gap:10px;">
+            <input type="number" class="input" id="m-creative-dur" value="${d.creativeDur||30}" min="5" max="180" style="width:80px;">
+            <span style="font-size:13px;color:var(--gray);">minutes</span>
+            <div style="display:flex;gap:6px;">
+              ${[20,30,45,60].map(v=>`<div class="chip" onclick="document.getElementById('m-creative-dur').value=${v};morningData.creativeDur=${v}">${v}</div>`).join('')}
+            </div>
           </div>
         </div>
       `;
@@ -2217,9 +2723,14 @@ function renderMorningStep() {
     case 'planning':
       const allGoalBlocks = [];
       if (d.mainGoal) allGoalBlocks.push({ id:'main', task: d.mainGoal, duration: durStrToMin(d.mainGoalDur||'1h'), color:'#1D2A62', label:'Main goal' });
-      if (d.nonNeg) allGoalBlocks.push({ id:'nonneg', task: d.nonNeg, duration: durStrToMin(d.nonNegDur||'30 min'), color:'#1A5E3A', label:'Non-négociable' });
-      if (d.smallTask) allGoalBlocks.push({ id:'small', task: d.smallTask, duration: durStrToMin(d.smallTaskDur||'20 min'), color:'#4A55A2', label:'Small task' });
-      if (d.todo) allGoalBlocks.push({ id:'todo', task: d.todo, duration: durStrToMin(d.todoDur||'20 min'), color:'#6B3FA0', label:'To-do' });
+      if (d.nonNeg) allGoalBlocks.push({ id:'nonneg', task: d.nonNeg, duration: durStrToMin(d.nonNegDur||'30 min'), color:'#2D4A8C', label:'Non-négociable' });
+      if (d.smallTask) allGoalBlocks.push({ id:'small', task: d.smallTask, duration: durStrToMin(d.smallTaskDur||'20 min'), color:'#3D6BB5', label:'Small task' });
+      if (d.todo) allGoalBlocks.push({ id:'todo', task: d.todo, duration: durStrToMin(d.todoDur||'20 min'), color:'#5B8DD9', label:'To-do' });
+      if (d.creative) allGoalBlocks.push({ id:'creative', task: d.creative, duration: d.creativeDur||30, color:'#7FB3F5', label:'Créatif' });
+      // Extra tasks
+      (d.extraTasks||[]).filter(t=>t.name).forEach((t,i) => {
+        allGoalBlocks.push({ id:'extra'+i, task: t.name, duration: t.duration||15, color:'#4A90C4', label:'Tâche' });
+      });
 
       if (!morningData.plannerSlots || morningData.plannerSlots.length === 0) {
         let ch = 8, cm = 0;
@@ -2356,17 +2867,17 @@ function mfRenderBlocks() {
     const c = s.color || '#1D2A62';
     return `<div class="mf-tl-block" data-si="${si}"
       style="position:absolute;top:${top}px;left:4px;right:4px;height:${hpx}px;
-             background:${c};border-radius:9px;padding:7px 10px;
+             background:${c};border-radius:9px;padding:${hpx<30?'4px 8px':'7px 10px'};
              box-shadow:0 2px 8px rgba(0,0,0,0.18);touch-action:none;cursor:pointer;pointer-events:all;
-             display:flex;flex-direction:column;justify-content:center;user-select:none;">
-      <div style="font-size:12px;font-weight:700;color:white;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${s.task}</div>
-      <div style="display:flex;align-items:center;gap:6px;margin-top:3px;">
+             display:flex;flex-direction:column;justify-content:center;user-select:none;overflow:hidden;">
+      <div style="font-size:${hpx<28?'10px':'12px'};font-weight:700;color:white;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.2;">${s.task}</div>
+      ${hpx >= 38 ? `<div style="display:flex;align-items:center;gap:6px;margin-top:2px;">
         <span style="font-size:10px;color:rgba(255,255,255,0.75);">${s.time} · ${minToStr(s.duration)}</span>
         <span style="margin-left:auto;display:flex;align-items:center;gap:3px;background:rgba(255,255,255,0.2);border-radius:20px;padding:2px 7px;cursor:pointer;" onclick="event.stopPropagation();mfStartTimer(${si})">
           <svg width="9" height="9" fill="none" viewBox="0 0 24 24"><polygon points="5,3 19,12 5,21" fill="white"/></svg>
           <span style="font-size:10px;color:white;font-weight:700;">Timer</span>
         </span>
-      </div>
+      </div>` : ''}
     </div>`;
   }).join('');
   // re-attach drag listeners
@@ -2648,6 +3159,10 @@ function saveMorningStepData() {
       if (existIdx>=0) logs[existIdx]=entry; else logs.push(entry);
       setData('sleep_log', logs);
     }
+  }
+  if (step === 'creative') {
+    const cdEl = document.getElementById('m-creative-dur');
+    if(cdEl) morningData.creativeDur = parseInt(cdEl.value)||30;
   }
   if (step === 'goals' || step === 'balanced-goals') {
     if (g('m-main')) morningData.mainGoal = g('m-main').value;
@@ -2990,20 +3505,34 @@ function renderProjTab(tabIdx, idx) {
   } else if (tabIdx === 1) {
     el.innerHTML =
       '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">'+
-        '<div style="font-size:12px;font-weight:700;color:var(--gray);text-transform:uppercase;letter-spacing:0.8px;">Étapes & Jalons</div>'+
-        '<button onclick="addProjectStep2('+idx+')" style="background:none;border:none;cursor:pointer;font-size:12px;font-weight:600;color:var(--navy);">+ Étape</button>'+
+        '<div style="font-size:12px;font-weight:700;color:var(--gray);text-transform:uppercase;letter-spacing:0.8px;">Jalons ('+( p.milestones||[]).length+')</div>'+
+        '<button onclick="addMilestoneDirect('+idx+')" style="background:var(--navy);color:white;border:none;border-radius:8px;padding:5px 12px;cursor:pointer;font-size:11px;font-weight:700;">+ Jalon</button>'+
       '</div>'+
-      (p.milestones||[]).map((m,mi)=>'<div style="display:flex;gap:10px;padding:12px;background:var(--white);border-radius:12px;border:1px solid var(--border);margin-bottom:8px;">'+
-        '<div style="width:22px;height:22px;border-radius:50%;background:'+(m.status==='Terminé'?'var(--success)':'var(--navy)')+';color:white;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;flex-shrink:0;">'+(mi+1)+'</div>'+
-        '<div style="flex:1;"><div style="font-size:13px;font-weight:700;">'+m.name+'</div><div style="font-size:11px;color:var(--gray);">'+(m.date||'')+'</div></div>'+
-        '<span style="font-size:10px;padding:3px 8px;border-radius:20px;background:'+(m.status==='Terminé'?'rgba(16,185,129,0.1)':'rgba(29,42,98,0.1)')+';color:'+(m.status==='Terminé'?'var(--success)':'var(--navy)')+';">'+(m.status||'À venir')+'</span>'+
-      '</div>').join('')+
-      ((p.milestones||[]).length===0?'<div style="font-size:13px;color:var(--gray);text-align:center;padding:16px 0;">Aucun jalon</div>':'')+
-      '<button onclick="addMilestoneDirect('+idx+')" class="btn btn-outline btn-sm btn-full" style="margin-top:8px;">+ Ajouter un jalon</button>';
+      (p.milestones||[]).map((m,mi)=>
+        '<div class="proj-milestone-row" data-mi="'+mi+'" draggable="true" ondragstart="mileDragStart(event,'+idx+','+mi+')" ondragover="event.preventDefault()" ondrop="mileDrop(event,'+idx+','+mi+')"'+
+        ' style="display:flex;align-items:center;gap:10px;padding:12px;background:var(--white);border-radius:12px;border:1px solid var(--border);margin-bottom:8px;cursor:grab;">'+
+          '<div style="cursor:grab;color:var(--gray-light);flex-shrink:0;padding:0 2px;">⠿</div>'+
+          '<div class="check-box" onclick="toggleMilestone('+idx+','+mi+')" style="'+(m.status==='Terminé'?'background:var(--success);border-color:var(--success);':'')+';cursor:pointer;flex-shrink:0;">'+
+            '<svg fill="none" viewBox="0 0 24 24"><path stroke="'+(m.status==='Terminé'?'white':'var(--border)')+'" stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>'+
+          '</div>'+
+          '<div style="flex:1;">'+
+            '<div style="font-size:13px;font-weight:700;'+(m.status==='Terminé'?'text-decoration:line-through;color:var(--gray);':'')+'">'+(m.name||'')+'</div>'+
+            '<div style="display:flex;gap:6px;margin-top:2px;">'+
+              (m.period?'<span style="font-size:10px;padding:2px 7px;background:rgba(29,42,98,0.08);border-radius:20px;font-weight:700;color:var(--navy);">'+m.period+'</span>':'')+
+              (m.date?'<span style="font-size:11px;color:var(--gray);">'+m.date+'</span>':'')+
+            '</div>'+
+          '</div>'+
+          '<span style="font-size:10px;padding:3px 8px;border-radius:20px;cursor:pointer;background:'+(m.status==='Terminé'?'rgba(16,185,129,0.1)':'rgba(29,42,98,0.08)')+';color:'+(m.status==='Terminé'?'var(--success)':'var(--navy)')+'" onclick="cycleMilestoneStatus('+idx+','+mi+')">'+(m.status||'À venir')+'</span>'+
+        '</div>'
+      ).join('')+
+      ((p.milestones||[]).length===0?'<div style="font-size:13px;color:var(--gray);text-align:center;padding:16px 0;background:var(--surface);border-radius:10px;">Aucun jalon — ajoute les grandes étapes</div>':'')+
+      '<div style="margin-top:16px;"><div style="font-size:12px;font-weight:700;color:var(--gray);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:10px;">Étapes</div>'+
+        '<button onclick="addProjectStep2('+idx+')" style="background:none;border:1px solid var(--border);border-radius:8px;padding:8px 14px;cursor:pointer;font-size:12px;font-weight:600;color:var(--navy);width:100%;">+ Ajouter une étape</button>'+
+      '</div>';
   } else if (tabIdx === 2) {
     el.innerHTML =
       '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">'+
-        '<div style="font-size:12px;font-weight:700;color:var(--gray);text-transform:uppercase;letter-spacing:0.8px;">4. Difficultés & solutions</div>'+
+        '<div style="font-size:12px;font-weight:700;color:var(--gray);text-transform:uppercase;letter-spacing:0.8px;">Difficultés & solutions</div>'+
         '<button onclick="addDifficulty('+idx+')" style="background:none;border:none;cursor:pointer;font-size:12px;font-weight:600;color:var(--navy);">+ Ajouter</button>'+
       '</div>'+
       (p.difficulties||[]).map((d,di)=>'<div style="padding:12px;background:var(--white);border-radius:12px;border:1px solid var(--border);margin-bottom:8px;">'+
@@ -3011,11 +3540,45 @@ function renderProjTab(tabIdx, idx) {
         '<div style="font-size:13px;font-weight:600;">'+d.problem+'</div>'+
         (d.solution?'<div style="font-size:12px;color:var(--gray);margin-top:4px;">Solution: '+d.solution+'</div>':'')+
       '</div>').join('')+
-      ((p.difficulties||[]).length===0?'<div style="font-size:13px;color:var(--gray);text-align:center;padding:16px 0;">Anticipe les obstacles</div>':'');
+      ((p.difficulties||[]).length===0?'<div style="font-size:13px;color:var(--gray);text-align:center;padding:16px 0;">Anticipe les obstacles</div>':'')+
+
+      // Dépenses section
+      '<div style="margin-top:20px;">'+
+        '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">'+
+          '<div style="font-size:12px;font-weight:700;color:var(--gray);text-transform:uppercase;letter-spacing:0.8px;">Dépenses</div>'+
+          '<button onclick="addProjectExpense('+idx+')" style="background:none;border:none;cursor:pointer;font-size:12px;font-weight:600;color:var(--navy);">+ Dépense</button>'+
+        '</div>'+
+        (p.expenses||[]).map((exp,ei)=>'<div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--border);">'+
+          '<div style="flex:1;"><div style="font-size:13px;font-weight:600;">'+exp.label+'</div>'+
+          (exp.date?'<div style="font-size:11px;color:var(--gray);">'+exp.date+'</div>':'')+
+          '</div>'+
+          '<div style="font-size:14px;font-weight:800;color:var(--navy);">'+exp.amount+(exp.currency||' €')+'</div>'+
+          '<button onclick="deleteProjectExpense('+idx+','+ei+')" style="background:none;border:none;cursor:pointer;color:var(--gray-light);padding:0;">'+
+            '<svg width="12" height="12" fill="none" viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>'+
+          '</button>'+
+        '</div>').join('')+
+        ((p.expenses||[]).length===0?'<div style="font-size:12px;color:var(--gray);padding:8px 0;">Aucune dépense enregistrée</div>':'')+
+        ((p.expenses||[]).length>0?
+          '<div style="display:flex;justify-content:space-between;padding:10px 0;border-top:2px solid var(--border);margin-top:4px;">'+
+            '<div style="font-size:13px;font-weight:700;">Total dépenses</div>'+
+            '<div style="font-size:16px;font-weight:800;color:var(--navy);">'+
+              (p.expenses||[]).reduce((a,e)=>a+parseFloat(e.amount||0),0).toFixed(2)+
+              ((p.expenses||[])[0]?.currency||' €')+
+            '</div>'+
+          '</div>':'')+
+      '</div>';
   } else {
     const sessions = getData('work_sessions', []).filter(s => (s.task||'').toLowerCase().includes((p.name||'').substring(0,8).toLowerCase()));
+    const totalMin = sessions.reduce((a,s)=>a+parseInt(s.duration||0),0);
     el.innerHTML =
-      '<div style="font-size:12px;font-weight:700;color:var(--gray);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:12px;">Historique</div>'+
+      '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">'+
+        '<div style="font-size:12px;font-weight:700;color:var(--gray);text-transform:uppercase;letter-spacing:0.8px;">Sessions de travail</div>'+
+        '<button onclick="addManualWorkSession('+idx+')" style="background:none;border:none;cursor:pointer;font-size:12px;font-weight:600;color:var(--navy);">+ Ajouter</button>'+
+      '</div>'+
+      (sessions.length>0?'<div style="padding:10px;background:var(--surface);border-radius:10px;margin-bottom:12px;display:flex;justify-content:space-between;">'+
+        '<span style="font-size:12px;color:var(--gray);">Total</span>'+
+        '<span style="font-size:14px;font-weight:800;color:var(--navy);">'+(totalMin/60).toFixed(1)+'h</span>'+
+      '</div>':'')+
       sessions.slice(-20).reverse().map(s=>'<div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--border);">'+
         '<div style="width:8px;height:8px;border-radius:50%;background:var(--navy);flex-shrink:0;"></div>'+
         '<div style="flex:1;"><div style="font-size:13px;font-weight:600;">'+s.task+'</div><div style="font-size:11px;color:var(--gray);">'+new Date(s.date).toLocaleDateString()+' · '+s.duration+' min</div></div>'+
@@ -3031,6 +3594,99 @@ function closeProjectDetail() {
   document.getElementById('proj-list-view').style.display = 'flex';
   renderProjects();
 }
+
+// Milestone helpers
+function toggleMilestone(pIdx, mIdx) {
+  const projects = getData('projects',[]);
+  const m = (projects[pIdx].milestones||[])[mIdx];
+  if(!m) return;
+  m.status = m.status==='Terminé'?'À venir':'Terminé';
+  setData('projects',projects);
+  renderProjTab(currentProjTab, pIdx);
+}
+function cycleMilestoneStatus(pIdx, mIdx) {
+  const projects = getData('projects',[]);
+  const m = (projects[pIdx].milestones||[])[mIdx];
+  if(!m) return;
+  const statuses = ['À venir','En cours','Terminé'];
+  const cur = statuses.indexOf(m.status||'À venir');
+  m.status = statuses[(cur+1)%statuses.length];
+  setData('projects',projects);
+  renderProjTab(currentProjTab, pIdx);
+}
+let _mileDragSrc = null;
+function mileDragStart(e, pIdx, mIdx) { _mileDragSrc={pIdx,mIdx}; e.dataTransfer.effectAllowed='move'; }
+function mileDrop(e, pIdx, mIdx) {
+  e.preventDefault();
+  if(!_mileDragSrc||_mileDragSrc.pIdx!==pIdx||_mileDragSrc.mIdx===mIdx) return;
+  const projects=getData('projects',[]);
+  const miles=projects[pIdx].milestones||[];
+  const [moved]=miles.splice(_mileDragSrc.mIdx,1);
+  miles.splice(mIdx,0,moved);
+  projects[pIdx].milestones=miles;
+  setData('projects',projects);
+  _mileDragSrc=null;
+  renderProjTab(currentProjTab,pIdx);
+}
+
+// Expenses
+function addProjectExpense(idx) {
+  openModal('Ajouter une dépense',
+    '<div class="field"><label class="label">Libellé</label><input class="input" id="exp-label" placeholder="Ex: Logiciel, prestataire..." onkeydown="if(event.key===\'Enter\'){event.preventDefault();document.getElementById(\'modal-save-btn\').click();}"></div>'+
+    '<div class="field"><label class="label">Montant</label><div style="display:flex;gap:8px;"><input type="number" class="input" id="exp-amount" placeholder="0.00" style="flex:1;"><select class="input" id="exp-currency" style="width:70px;"><option value=" €">€</option><option value=" $">$</option><option value=" CFA">CFA</option></select></div></div>'+
+    '<div class="field"><label class="label">Date</label><input type="date" class="input" id="exp-date" value="'+new Date().toISOString().split('T')[0]+'"></div>',
+  () => {
+    const label=document.getElementById('exp-label').value.trim();
+    const amount=parseFloat(document.getElementById('exp-amount').value)||0;
+    if(!label||!amount) return;
+    const projects=getData('projects',[]);
+    if(!projects[idx].expenses) projects[idx].expenses=[];
+    projects[idx].expenses.push({label,amount,currency:document.getElementById('exp-currency').value,date:document.getElementById('exp-date').value});
+    setData('projects',projects);
+    renderProjTab(currentProjTab,idx);
+  });
+}
+function deleteProjectExpense(pIdx, eIdx) {
+  const projects=getData('projects',[]);
+  (projects[pIdx].expenses||[]).splice(eIdx,1);
+  setData('projects',projects);
+  renderProjTab(currentProjTab,pIdx);
+}
+
+// Manual work session
+function addManualWorkSession(idx) {
+  const p=getData('projects',[])[idx];
+  openModal('Ajouter du temps — '+p.name,
+    '<div class="field"><label class="label">Temps travaillé</label><input type="number" class="input" id="mws-dur" placeholder="Ex: 60" min="1" onkeydown="if(event.key===\'Enter\'){event.preventDefault();document.getElementById(\'modal-save-btn\').click();}"><div style="font-size:11px;color:var(--gray);margin-top:4px;">en minutes</div></div>'+
+    '<div class="field"><label class="label">Description (optionnel)</label><input class="input" id="mws-desc" placeholder="Ce que tu as fait..."></div>',
+  () => {
+    const dur=parseInt(document.getElementById('mws-dur').value)||0;
+    if(!dur) return;
+    const desc=document.getElementById('mws-desc').value||p.name;
+    logWorkSession(desc||p.name, dur);
+    renderProjTab(currentProjTab,idx);
+  });
+}
+
+// Timer done without timer (mark finished early)
+function markTimerDone() {
+  const worked = focusDuration - Math.ceil(focusSecondsLeft/60);
+  clearInterval(focusTimerInterval);
+  focusTimerRunning = false;
+  if(worked>0) logWorkSession(timerTask, worked);
+  else logWorkSession(timerTask, focusDuration);
+  focusSecondsLeft = focusDuration*60;
+  updateFocusDisplay();
+  document.getElementById('float-timer').classList.remove('visible');
+  const mca = document.getElementById('myday-current-action');
+  if(mca) mca.style.display='none';
+  resetTimerUI();
+  refreshDashboard();
+  dtToast('Tâche terminée !');
+}
+
+// No reward for creative projects — applied in wizard
+function isCreativeProject(data) { return data.type==='creative'; }
 
 function openAddProject() { openNewProjectWizard(); }
 function openNewProjectWizard(editIdx) {
@@ -3127,7 +3783,9 @@ function saveWizardStep() {
 
 function wizardNextStep() {
   saveWizardStep();
-  if (wizardStep >= WIZ_STEPS.length - 1) {
+  // Skip reward step for creative projects
+  const isCreative = wizardData.type==='creative';
+  if (wizardStep >= WIZ_STEPS.length - 1 || (isCreative && WIZ_STEPS[wizardStep+1]==='reward')) {
     if (!wizardData.name) return alert('Donne un nom à ton projet');
     const projects = getData('projects', []);
     if (wizardData.editIdx !== undefined) { projects[wizardData.editIdx] = { ...wizardData }; }
@@ -5477,9 +6135,17 @@ function startEventTimer(name, duration) {
 function openModal(title, bodyHtml, saveCallback) {
   document.getElementById('modal-title').textContent = title;
   document.getElementById('modal-body').innerHTML = bodyHtml;
-  document.getElementById('modal-save-btn').style.display = 'flex';
+  const saveBtn = document.getElementById('modal-save-btn');
+  saveBtn.style.display = 'flex';
+  saveBtn.style.background = '';
+  saveBtn.textContent = 'Enregistrer';
   modalSaveCallback = saveCallback;
   document.getElementById('generic-modal').classList.add('open');
+  // Auto-focus first input
+  setTimeout(()=>{
+    const first = document.querySelector('#modal-body input, #modal-body textarea, #modal-body select');
+    if(first) first.focus();
+  }, 100);
 }
 
 function closeModal() {
@@ -5490,6 +6156,15 @@ function closeModal() {
 function saveModal() {
   if (modalSaveCallback) { modalSaveCallback(); closeModal(); }
 }
+
+// Enter key on any modal input triggers save
+document.getElementById('generic-modal').addEventListener('keydown', function(e) {
+  if(e.key === 'Enter' && e.target.tagName !== 'TEXTAREA' && !e.target.hasAttribute('data-no-enter')) {
+    e.preventDefault();
+    const saveBtn = document.getElementById('modal-save-btn');
+    if(saveBtn && saveBtn.style.display !== 'none') saveModal();
+  }
+});
 
 // Close modal on overlay click
 document.getElementById('generic-modal').addEventListener('click', function(e) {
